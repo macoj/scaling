@@ -14,7 +14,7 @@ models = {'lognormal_delta_fixed': analysis.LogNormalFixedDAnalysis,
           'gaussian_beta_fixed': analysis.ConstrainedDFixedBetaAnalysis,
           'person': analysis.PopulationAnalysis}
 
-df_15 = pd.read_excel("~/Table_8_Offenses_Known_to_Law_Enforcement_by_State_by_City_2015.xls", "15tbl08")
+df_15 = pd.read_excel("../Table_8_Offenses_Known_to_Law_Enforcement_by_State_by_City_2015.xls", "15tbl08")
 states = list(df_15.State)
 states_index = [k for k in range(len(states)) if type(states[k]) == unicode]
 states_correction = list(np.concatenate([[states[states_index[i]]]*(states_index[i+1] - states_index[i]) for i in range(len(states_index) - 1)]))
