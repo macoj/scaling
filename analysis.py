@@ -1,40 +1,42 @@
-"""
-This module collects the different analysis and different databases we have so far
-and computes all the combinations.
-
-DATABASES is a dictionary that the databases. You can add new databases to
-this dictionary (see existing examples)
-
-The class `MLSAnalysis` and subclasses compute and store the minimum least square.
-The class `LikelihoodAnalysis` and subclasses compute and store the Likelihood analysis.
-
-Examples:
-
->>> result = FixedDAnalysis('brazil_aids_2010')
->>> print(result.beta)  # (value, error)
->>> print(result.p_value) # the p-value of the model.
->>> result = FixedDAnalysis('brazil_aids_2010')
->>> print(result.beta)  # (value, error) with d = 0.5 fixed.
-
-Since the analysis of the likelihood are taking a lot of time, we are storing
-the result in a file so we retrieve it if it already exists. Erase `_data` to force
-a new calculation (e.g. if the analysis/database changes).
-
-The objective is to have the analysis ready to add to a table of databases.
-"""
+import json
 import numpy as np
 import scipy.stats
 import scipy.stats.mstats
-
-from brazil.data import cache
-import brazil, eurostat, usa, oecd, uk, new_dataset, new_dataset2
-from best_parameters import mls_best_fit, minimize_with_errors, \
-    NormalModel, LogNormalModel, PopulationModel
+from best_parameters import mls_best_fit, minimize_with_errors, NormalModel, LogNormalModel, PopulationModel
 from pvalue_population import pvalue_pop
 
 
 MIN_VALUE = 10**-8
-            
+
+def cache(file_name_format):
+    """
+    A decorator to cache the result of the function into a file. The result
+    must be a dictionary. The result storage is in json.
+
+    The decorator argument is the file name format. The format must contain the
+    same number of positional arguments as the function
+
+    E.g. 'd_{0}_{1}.json' for a function of 2 arguments.
+    """
+    def cache_function(function):
+        def func_wrapper(*args, **kwargs):
+            file_name = file_name_format.format(*args, **kwargs)
+            try:
+                if 'flush' in kwargs and kwargs['flush']:
+                    raise IOError
+                with open(file_name, 'r', encoding='utf8') as cache_file:
+                    data = json.load(cache_file)
+            except IOError:
+                data = function(*args, **kwargs)
+                with open(file_name, 'w', encoding='utf8') as cache_file:
+                    cache_file.write(json.dumps(data, ensure_ascii=False, indent=2,
+                                                separators=(',', ': '),
+                                                sort_keys=True))
+
+            return data
+        return func_wrapper
+    return cache_function
+
 
 def sort_data(x, y):
     """
@@ -60,50 +62,28 @@ def remove_zero_y(x, y):
     return np.array(x), np.array(y)
 
 
-# lambda's so we don't load all databases to the dictionary.
-# Use `DATABASES['...']()` to load it, returning the tuple (x, y).
-DATABASES = {'brazil_aids_2010': lambda: remove_zero_y(*sort_data(*brazil.aids(2010))),
-             'brazil_gdp_2010': lambda: remove_zero_y(*sort_data(*brazil.gdp(2010))),
-             'brazil_externalCauses_2010': lambda: remove_zero_y(*sort_data(*brazil.externalCauses(2010))),
-             'ocde_gdp': lambda: remove_zero_y(*sort_data(*oecd.gdp())),
-             'ocde_patents': lambda: remove_zero_y(*sort_data(*oecd.patents())),
-             'usa_gdp': lambda: remove_zero_y(*sort_data(*usa.gdp())),
-             'usa_miles': lambda: remove_zero_y(*sort_data(*usa.miles())),
-             'eurostat_cinema_seats': lambda: remove_zero_y(*sort_data(*eurostat.cinemaSeats())),
-             'eurostat_cinema_attendance': lambda: remove_zero_y(*sort_data(*eurostat.cinemaAttendance())),
-             'eurostat_museum_visitors': lambda: remove_zero_y(*sort_data(*eurostat.museumVisitors())),
-             'eurostat_theaters': lambda: remove_zero_y(*sort_data(*eurostat.theaters())),
-             'eurostat_libraries': lambda: remove_zero_y(*sort_data(*eurostat.libraries())),
-             'uk_patents': lambda: remove_zero_y(*sort_data(*uk.row('Patents'))),
-             'uk_income': lambda: remove_zero_y(*sort_data(*uk.row('Income'))),
-             'uk_train': lambda: remove_zero_y(*sort_data(*uk.row('Train'))),
-             'new_dataset': lambda: remove_zero_y(*sort_data(*new_dataset.index())),
-             'new_dataset2': lambda: remove_zero_y(*sort_data(*new_dataset2.index())),
-             }
-
-
 class Analysis(object):
     """
     A general class that holds data and statistics of it.
     """
-    def __init__(self, dataset):
-        self.dataset = dataset
-        self.x, self.y = DATABASES[dataset]()
+    def __init__(self, data_xy):
+        self.x, self.y = data_xy
 
     def __str__(self):
         return self.__class__.__name__
 
-class xy(Analysis):
-    def __init__(self,dataset):
-        self.x, self.y = DATABASES[dataset]()
-    
+#
+# class xy(Analysis):
+#     def __init__(self,dataset):
+#         self.x, self.y = DATABASES[dataset]()
+
 
 class MLSAnalysis(Analysis):
     """
     A MLS where we use all the data
     """
-    def __init__(self, dataset, cut=0):
-        super(MLSAnalysis, self).__init__(dataset)
+    def __init__(self, data_xy, cut=0):
+        super(MLSAnalysis, self).__init__(data_xy)
         self.cut = cut
         beta, self.error, c = mls_best_fit(np.log(self.x[cut:]), np.log(self.y[cut:]))
         self.params = [beta, c]
@@ -117,9 +97,9 @@ class MLSMedianAnalysis(MLSAnalysis):
     """
     A MLS where we only use the upper half (above median) of the data.
     """
-    def __init__(self, dataset):
-        x, _ = DATABASES[dataset]()
-        super(MLSMedianAnalysis, self).__init__(dataset, int(len(x)/2.0))
+    def __init__(self, data_xy):
+        x, _ = data_xy
+        super(MLSMedianAnalysis, self).__init__(data_xy, int(len(x)/2.0))
 
 
 class LikelihoodAnalysis(Analysis):
@@ -133,8 +113,8 @@ class LikelihoodAnalysis(Analysis):
     Model = NormalModel
     samples = 100
 
-    def __init__(self, dataset, bounds, required_successes=16):
-        super(LikelihoodAnalysis, self).__init__(dataset)
+    def __init__(self, data_xy, bounds, required_successes=16):
+        super(LikelihoodAnalysis, self).__init__(data_xy)
         self.bounds = bounds
         self._required_successes = required_successes
         result = self._mle_calculation(self._cache_name)
@@ -147,7 +127,7 @@ class LikelihoodAnalysis(Analysis):
 
     @property
     def _cache_name(self):
-        return '%s_%s_%d_%d' % (self, self.dataset, self._required_successes, self.samples)
+        return '%s_%d_%d' % (self, self._required_successes, self.samples)
 
     def _p_value_calculation(self, cache_file):
         """
@@ -171,7 +151,7 @@ class LikelihoodAnalysis(Analysis):
         # See https://github.com/numpy/numpy/issues/4895
         with np.errstate(under='ignore'):
             # Combine the D'Agostino normality K^2 test (s, k) with
-            # the spearman's correlation test (sr).
+            # the Spearman's correlation test (sr).
 
             # copy of scipy.stats.mstats.normaltest
             s, _ = scipy.stats.mstats.skewtest(self.z_scores)
@@ -187,7 +167,7 @@ class LikelihoodAnalysis(Analysis):
 
             return {'p_value': scipy.stats.chisqprob(k3, 3)}
 
-    @cache('_results/mle_{1}.json')
+    #@cache('_results/mle_{1}.json')
     def _mle_calculation(self, cache_file):
         """
         This computes:
@@ -276,8 +256,9 @@ class LikelihoodAnalysis(Analysis):
 
 class FixedDAnalysis(LikelihoodAnalysis):
     description = r'Gaussian fluctuations with \delta = 0.5'
-    def __init__(self, dataset, required_successes=16):
-        super(FixedDAnalysis, self).__init__(dataset,
+
+    def __init__(self, data_xy, required_successes=16):
+        super(FixedDAnalysis, self).__init__(data_xy,
                                              ([MIN_VALUE, None], [0.01, 3],
                                               [MIN_VALUE, None], [0.5, 0.5]),
                                              required_successes)
@@ -285,16 +266,18 @@ class FixedDAnalysis(LikelihoodAnalysis):
 
 class FixedDFixedBetaAnalysis(LikelihoodAnalysis):
     description = r'Gaussian fluctuations with \beta = 1 and \delta = 0.5'
-    def __init__(self, dataset, required_successes=16):
+
+    def __init__(self, data_xy, required_successes=16):
         super(FixedDFixedBetaAnalysis, self).__init__(
-            dataset, ([MIN_VALUE, None], [1, 1], [MIN_VALUE, None], [0.5, 0.5]),
+            data_xy, ([MIN_VALUE, None], [1, 1], [MIN_VALUE, None], [0.5, 0.5]),
             required_successes)
 
 
 class ConstrainedDAnalysis(LikelihoodAnalysis):
     description = r'Gaussian fluctuations with free \delta'
-    def __init__(self, dataset, required_successes=16):
-        super(ConstrainedDAnalysis, self).__init__(dataset,
+
+    def __init__(self, data_xy, required_successes=16):
+        super(ConstrainedDAnalysis, self).__init__(data_xy,
                                                    ([MIN_VALUE, None], [0.01, 3],
                                                     [MIN_VALUE, None], [0.5, 1.0]),
                                                    required_successes)
@@ -302,6 +285,7 @@ class ConstrainedDAnalysis(LikelihoodAnalysis):
 
 class ConstrainedDFixedBetaAnalysis(LikelihoodAnalysis):
     description = r'Gaussian fluctuations with \beta = 1 and free \delta'
+
     def __init__(self, dataset, required_successes=16):
         super(ConstrainedDFixedBetaAnalysis, self).__init__(
             dataset, ([MIN_VALUE, None], [1, 1], [MIN_VALUE, None], [0.5, 1.0]),
@@ -319,7 +303,7 @@ class PopulationAnalysis(LikelihoodAnalysis):
         # ([0.01, 3],) is the same as we use for beta.
         super(PopulationAnalysis, self).__init__(dataset, ([0.01, 3],), required_successes)
 
-    @cache('_results/pvalue_{1}.json')
+    # @cache('_results/pvalue_{1}.json')
     def _p_value_calculation(self, cache_file):
         return {'p_value': pvalue_pop(self.x, self.y, self.params, ([0.01, 3],))}
 
@@ -331,14 +315,12 @@ class PopulationAnalysis(LikelihoodAnalysis):
     def bic(self):
         # Bayesian information criterion, see e.g.
         # https://en.wikipedia.org/wiki/Bayesian_information_criterion
-        y = self.y
-        Y = np.sum(y)
+        sum_y = np.sum(self.y)
 
-        lnY_factorial = Y*np.log(Y) - Y
-        sum_lny_factorial = np.sum(y*np.log(y) - y)
+        ln_sum_y = sum_y*np.log(sum_y) - sum_y
+        sum_ln_sum_y = np.sum(self.y*np.log(self.y) - self.y)
 
-        return super(PopulationAnalysis, self).bic + \
-               2*(lnY_factorial - sum_lny_factorial)
+        return super(PopulationAnalysis, self).bic + 2*(ln_sum_y - sum_ln_sum_y)
 
     @property
     def delta(self):
@@ -368,23 +350,22 @@ class PopulationAnalysis(LikelihoodAnalysis):
 
 class PopulationFixedGammaAnalysis(PopulationAnalysis):
     description = r'People model with \delta = 1'
+
     def __init__(self, dataset, required_successes):
         # ([0.01, 3],) is the same as we use for beta.
         super(PopulationAnalysis, self).__init__(dataset, ([1, 1],), required_successes)
 
 
-
-        
 class LogNormalAnalysis(LikelihoodAnalysis):
     description = r'Log normal fluctuations with a general \delta'
     Model = LogNormalModel
 
-    def __init__(self, dataset, bounds=([MIN_VALUE, None],
+    def __init__(self, data_xy, bounds=([MIN_VALUE, None],
                                         [0.01, 3],
                                         [MIN_VALUE, None],
                                         [1, 3]),
                  required_successes=16):
-        super(LikelihoodAnalysis, self).__init__(dataset)
+        super(LikelihoodAnalysis, self).__init__(data_xy)
         self.x = np.log(self.x)
         self.y = np.log(self.y)
         self.bounds = bounds
@@ -450,6 +431,7 @@ class LogNormalAnalysis(LikelihoodAnalysis):
 
 class LogNormalFixedBetaAnalysis(LogNormalAnalysis):
     description = r'Log normal fluctuations with \beta = 1'
+
     def __init__(self, dataset, required_successes=16):
         super(LogNormalFixedBetaAnalysis, self).__init__(
             dataset, ([MIN_VALUE, None], [1, 1], [MIN_VALUE, None], [1, 3]),
@@ -458,6 +440,7 @@ class LogNormalFixedBetaAnalysis(LogNormalAnalysis):
 
 class LogNormalFixedDAnalysis(LogNormalAnalysis):
     description = r'Log normal fluctuations with \delta = 1'
+
     def __init__(self, dataset, required_successes=16):
         super(LogNormalFixedDAnalysis, self).__init__(
             dataset, ([MIN_VALUE, None], [0.01, 3], [MIN_VALUE, None], [2, 2]),
@@ -466,6 +449,7 @@ class LogNormalFixedDAnalysis(LogNormalAnalysis):
 
 class LogNormalFixedDFixedBetaAnalysis(LogNormalAnalysis):
     description = r'Log normal fluctuations with \beta = \delta = 1'
+
     def __init__(self, dataset, required_successes=16):
         super(LogNormalFixedDFixedBetaAnalysis, self).__init__(
             dataset, ([MIN_VALUE, None], [1, 1], [MIN_VALUE, None], [2, 2]),
