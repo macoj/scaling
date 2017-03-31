@@ -21,9 +21,9 @@ states_correction = list(np.concatenate([[states[states_index[i]]]*(states_index
 states_correction += [states[states_index[-1]]]*(len(states)-states_index[-1])
 df_15['State'] = states_correction
 df_15['City'] = map(lambda x: re.sub("[0-9]*", "", x), df_15.City)
-
+typec = "Larceny-\ntheft"
 types = ["Larceny-\ntheft", "Burglary", "Robbery", "Violent\ncrime", "Rape\n(legacy\ndefinition)2", 'Rape\n(revised\ndefinition)1', 'Property\ncrime', 'Motor\nvehicle\ntheft', 'Arson3', 'Aggravated\nassault', 'Murder and\nnonnegligent\nmanslaughter']
-
+model = analysis.PopulationAnalysis
 for typec in types:
     print typec
     df_15_ = df_15[df_15['Population'] > 10]
