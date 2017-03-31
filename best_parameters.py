@@ -77,9 +77,6 @@ def minimize(model, x, y, parameters=None, disp=True):
             bounds=model.bounds,
             options={'disp': disp, 'maxiter': max_iterations},
             callback=callback)
-        print result
-        print result.fun
-        print x, y
         assert(not isnan(result.fun))
 
         if result.success:
